@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 class StoryOptionLLM(BaseModel):
     text: str = Field(description="The text of the option shown to the user")
+    consequence: Optional[str] = Field(default=None, description="Brief description of what this choice might lead to")
     nextNode: Dict[str, Any] = Field(description="The next story node")
 
 

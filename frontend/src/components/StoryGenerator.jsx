@@ -92,7 +92,7 @@ function StoryGenerator() {
             <button onClick={reset}>Try Again</button>
         </div>}
 
-        {!jobId && !error && !loading && <ThemeInput onSubmit={generateStory} />}
+        {!jobId && !error && !loading && <ThemeInput onStart={generateStory} />}
 
         {loading && <LoadingStatus theme={theme} />}
     </div>

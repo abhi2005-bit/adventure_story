@@ -1,5 +1,5 @@
 import uuid
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
 from fastapi import (
@@ -18,10 +18,13 @@ from backend.models.job import StoryJob
 from backend.models.story import Story, StoryNode
 from backend.schemas.story import (
     CompleteStorySchema,
-    CreateStoryRequest
+    CompleteStoryNodeSchema,
+    CreateStoryRequest,
+    ChoiceRequest,
+    ChoiceResponse
 )
 from backend.schemas.job import StoryJobSchema
-from backend.core.story_generator import StoryGenerator
+from backend.services.story_generator import story_generator_service
 
 router = APIRouter(
     prefix="/story",
@@ -91,10 +94,10 @@ def generate_story_task(
         job.status = "processing"
         db.commit()
 
-        story = StoryGenerator.generate_story(
+        story = story_generator_service.generate_root_node(
             db=db,
-            session_id=session_id,
             theme=theme,
+            session_id=session_id,
         )
 
         job.story_id = story.id
@@ -141,27 +144,106 @@ def get_complete_story(story_id: int, db: Session = Depends(get_db)):
     return get_story_complete_by_id(story_id, db)
 
 
+@router.post("/{story_id}/choice", response_model=ChoiceResponse)
+def make_choice(
+    story_id: int,
+    request: ChoiceRequest,
+    db: Session = Depends(get_db)
+):
+    """Submit a choice and generate the next story node."""
+    story = db.query(Story).filter(Story.id == story_id).first()
+    if not story:
+        raise HTTPException(status_code=404, detail="Story not found")
+    
+    current_node = db.query(StoryNode).filter(
+        StoryNode.id == request.current_node_id,
+        StoryNode.story_id == story_id
+    ).first()
+    if not current_node:
+        raise HTTPException(status_code=404, detail="Current node not found")
+    
+    if current_node.is_ending:
+        raise HTTPException(status_code=400, detail="Story has already ended")
+    
+    # Find the chosen option
+    chosen_option = None
+    for opt in current_node.options or []:
+        if opt.get("text") == request.option_text:
+            chosen_option = opt
+            break
+    
+    if not chosen_option:
+        raise HTTPException(status_code=400, detail="Invalid choice")
+    
+    # If the option already has a target node, use it
+    if chosen_option.get("node_id"):
+        next_node = db.query(StoryNode).filter(
+            StoryNode.id == chosen_option["node_id"],
+            StoryNode.story_id == story_id
+        ).first()
+        if next_node:
+            return build_choice_response(story, next_node)
+    
+    # Otherwise, generate the next node
+    # Build previous choices list from the path to current node
+    previous_choices = build_previous_choices(db, current_node)
+    
+    next_node = story_generator_service.generate_next_node(
+        db=db,
+        story=story,
+        current_node=current_node,
+        chosen_option_text=request.option_text,
+        story_state=story.current_state or {},
+        previous_choices=previous_choices,
+        depth=current_node.depth
+    )
+    
+    return build_choice_response(story, next_node)
+
+
+def build_previous_choices(db: Session, node: StoryNode) -> List[str]:
+    """Build list of previous choices from root to current node."""
+    choices = []
+    current = node
+    while current.parent_node_id:
+        parent = db.query(StoryNode).filter(StoryNode.id == current.parent_node_id).first()
+        if parent and parent.options:
+            for opt in parent.options:
+                if opt.get("node_id") == current.id:
+                    choices.insert(0, opt.get("text", ""))
+                    break
+        current = parent
+    return choices
+
+
+def build_choice_response(story: Story, current_node: StoryNode) -> ChoiceResponse:
+    """Build the response for a choice submission."""
+    complete_story = build_complete_story_tree(story)
+    current_node_schema = build_node_schema(current_node)
+    
+    return ChoiceResponse(
+        story=complete_story,
+        current_node=current_node_schema,
+        is_ending=current_node.is_ending,
+        is_winning_ending=current_node.is_winning_ending
+    )
+
+
 def get_story_complete_by_id(story_id: int, db: Session) -> CompleteStorySchema:
     story = db.query(Story).filter(Story.id == story_id).first()
     if not story:
         raise HTTPException(status_code=404, detail="Story not found")
 
-    return build_complete_story_tree(db, story)
+    return build_complete_story_tree(story)
 
 
-def build_complete_story_tree(db: Session, story: Story) -> CompleteStorySchema:
-    nodes = db.query(StoryNode).filter(StoryNode.story_id == story.id).all()
+def build_complete_story_tree(story: Story) -> CompleteStorySchema:
+    nodes = story.nodes
     all_nodes = {}
     root_node = None
 
     for node in nodes:
-        node_schema = {
-            "id": node.id,
-            "content": node.content,
-            "options": node.options or [],
-            "is_ending": node.is_ending,
-            "is_winning_ending": node.is_winning_ending,
-        }
+        node_schema = build_node_schema(node)
         all_nodes[node.id] = node_schema
         if node.is_root:
             root_node = node_schema
@@ -174,6 +256,30 @@ def build_complete_story_tree(db: Session, story: Story) -> CompleteStorySchema:
         title=story.title,
         session_id=story.session_id,
         created_at=story.created_at,
+        current_state=story.current_state or {},
+        max_depth=story.max_depth,
         root_nodes=root_node,
         all_nodes=all_nodes,
+    )
+
+
+def build_node_schema(node: StoryNode) -> CompleteStoryNodeSchema:
+    """Build a CompleteStoryNodeSchema from a StoryNode."""
+    options = []
+    for opt in node.options or []:
+        options.append({
+            "text": opt.get("text", ""),
+            "node_id": opt.get("node_id"),
+            "consequence": opt.get("consequence")
+        })
+    
+    return CompleteStoryNodeSchema(
+        id=node.id,
+        content=node.content,
+        is_ending=node.is_ending,
+        is_winning_ending=node.is_winning_ending,
+        depth=node.depth,
+        story_state=node.story_state or {},
+        options=options,
+        parent_node_id=node.parent_node_id
     )

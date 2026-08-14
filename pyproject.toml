@@ -10,6 +10,15 @@ dependencies = [
     "langchain-openai>=1.4.3",
     "psycopg2-binary>=2.9.12",
     "python-dotenv>=1.2.2",
+    "pydantic-settings>=2.12.0",
     "sqlalchemy>=2.0.51",
     "uvicorn>=0.52.1",
 ]
+
+[tool.uv.workspace]
+members = [
+    "backend",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

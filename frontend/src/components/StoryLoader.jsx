@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import LoadingStatus from './LoadingStatus.jsx'
@@ -38,6 +38,14 @@ function StoryLoader() {
         navigate('/')
     }
 
+    const handleMakeChoice = useCallback(async (storyId, nodeId, choiceText) => {
+        const response = await axios.post(`${API_BASE_URL}/story/${storyId}/choice`, {
+            current_node_id: nodeId,
+            option_text: choiceText
+        })
+        return response.data
+    }, [])
+
     if (loading) {
         return <LoadingStatus theme={'story'} />
     }
@@ -54,7 +62,7 @@ function StoryLoader() {
 
     if (story) {
         return <div className='story-loader'>
-            <StoryGame story={story} onNewStory={createNewStory} />
+            <StoryGame story={story} onNewStory={createNewStory} onMakeChoice={handleMakeChoice} />
         </div>
     }
 

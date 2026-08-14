@@ -6,6 +6,8 @@ if __package__ in (None, ""):
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -14,19 +16,20 @@ from backend.db.database import create_tables
 from backend.routers import job, story
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    create_tables()
+    yield
+
+
 app = FastAPI(
     title="Choose Your Own Adventure Game API",
     description="This is a simple API for a choose your own adventure game.",
     version="0.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
-
-
-@app.on_event("startup")
-def on_startup():
-    create_tables()
-
 
 app.add_middleware(
     CORSMiddleware,
